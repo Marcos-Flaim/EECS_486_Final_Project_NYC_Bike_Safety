@@ -67,7 +67,7 @@ crash_gdf = gpd.GeoDataFrame(
 crash_gdf = crash_gdf.to_crs(2263)
 
 # List layers inside lion.gdb
-gdb_path = "nyclion/lion/lion.gdb"
+gdb_path = "lion/lion.gdb"
 layers = fiona.listlayers(gdb_path)
 print("Layers in lion.gdb:", layers)
 
@@ -220,6 +220,11 @@ print(snapped["snap_dist"].describe())
 # Crash count distribution
 print(node_counts["crash_count"].describe())
 
-
+results[
+    ["intersection_name",
+     "crash_count",
+     "total_killed",
+     "total_injured",
+     "severity_score"]].to_csv("all_intersections_ranked.csv", index=False)
 
 
