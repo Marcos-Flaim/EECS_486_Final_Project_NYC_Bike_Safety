@@ -66,27 +66,19 @@ crash_gdf = gpd.GeoDataFrame(
 
 crash_gdf = crash_gdf.to_crs(2263)
 
-# List layers inside lion.gdb
+# Get path to lion.gdb
 gdb_path = "lion/lion.gdb"
-layers = fiona.listlayers(gdb_path)
-print("Layers in lion.gdb:", layers)
 
 # Load the node layer
 nodes = gpd.read_file(gdb_path, layer="node")
 nodes = nodes.to_crs(2263)
 # TODO: Filter out non-intersection nodes
-print("Node layer loaded with", len(nodes), "features")
-print(nodes.columns)
 
 # Load centerline layer
 lion = gpd.read_file(gdb_path, layer="lion")
 lion = lion.to_crs(2263)
-print("Lion layer loaded with", len(lion), "features")
-print(lion.columns)
 
-# Confirm Nodeto and Nodefrom exist
-print([col for col in lion.columns if "Node" in col])
-
+# ----PROCESS OVERVIEW:
 # Crash instances -> snap to official LION NODEID -> filter
 # -> count -> label intersections
 
@@ -98,23 +90,19 @@ snapped = gpd.sjoin_nearest(
     distance_col="snap_dist"
 )
 
-
 # Filter to crashes within ~50ft of node 
 # (ensures we're capturing intersection crashes, not mid-block)
 snapped = snapped[snapped["snap_dist"] <= 50]
 
-print(snapped["snap_dist"].describe())
-
-# Count crashes per NODEID
+# Group crash count by NODEID
 node_counts = (
     snapped.groupby("NODEID")
     .size()
     .reset_index(name="crash_count")
     .sort_values("crash_count", ascending=False)
 )
-print(node_counts.head(10))
 
-# Extract street names per NODEID
+# Extract street names for each NODEID
 from_nodes = lion[["NodeIDFrom", "Street"]].rename(
     columns={"NodeIDFrom": "NODEID"}
 )
@@ -128,7 +116,7 @@ node_streets = pd.concat([from_nodes, to_nodes])
 # Drop duplicates to get unique street names per NODEID
 node_streets = node_streets.drop_duplicates()
 
-# Group street names per NODEID
+# Group street names by NODEID
 intersection_names = (
     node_streets
     .groupby("NODEID")["Street"]
@@ -150,13 +138,52 @@ results = node_counts.merge(
     how="left"
 )
 
-print(results.head(10))
-print(results.head(10)[["intersection_name", "crash_count"]])
+# Extract latitude and longitude for each intersection -------
+# (nyclion data tracks coordinates via NY State Plane (EPSG:2263), 
+# we can convert back to universal lat/long for mapping)
 
-# IN PROGRESS: Add heuristic formula to rank intersection severity
+# Get unique State Plane coordinates per NODEID
+node_coords = nodes[["NODEID", "geometry"]].drop_duplicates()
+node_coords["latitude"] = node_coords.geometry.y
+node_coords["longitude"] = node_coords.geometry.x
+
+# Group coordinates by NODEID
+intersection_coords = (
+    node_coords
+    .groupby("NODEID")[["latitude", "longitude"]]
+    .first()
+    .reset_index()
+)
+
+# Convert latitude and longitude back to WGS84 for output
+intersection_coords_gdf = gpd.GeoDataFrame(
+    intersection_coords,
+    geometry=gpd.points_from_xy(
+        intersection_coords["longitude"],
+        intersection_coords["latitude"]
+    ),
+    crs=2263
+)
+
+intersection_coords_gdf = intersection_coords_gdf.to_crs(4326)
+intersection_coords = pd.DataFrame({
+    "NODEID": intersection_coords_gdf["NODEID"],
+    "latitude": intersection_coords_gdf.geometry.y,
+    "longitude": intersection_coords_gdf.geometry.x
+})
+
+# Merge with intersection names and crash counts
+results = results.merge(
+    intersection_coords,
+    on="NODEID",
+    how="left"
+)
+
+# ----Heuristic formula to rank intersection severity:
 # Severity weighting - num killed/injured, crash count
 # Recency weighting - more recent crashes weighted higher
 
+# 1) Calculate weighted score (for each crash)
 snapped["CRASH DATE"] = pd.to_datetime(snapped["CRASH DATE"])
 
 # Compute age in yrs
@@ -164,7 +191,7 @@ today = pd.Timestamp.today()
 snapped["age_years"] = (today - snapped["CRASH DATE"]).dt.days / 365.25
 
 # Exp decay parameter
-lambda_ = 0.3 # REVISE/TUNE--------------
+lambda_ = 0.3 #TODO:REVISE/TUNE--------------
 
 snapped["recency_weight"] = np.exp(-lambda_ * snapped["age_years"])
 
@@ -180,20 +207,25 @@ snapped["weighted_score"] = (
     snapped["base_severity"] * snapped["recency_weight"]
 )
 
-# Create summary by weighted score
+# 2) Create intersections summary
 node_summary = (
     snapped.groupby("NODEID")
     .agg(
         crash_count=("NODEID", "size"),
         total_killed=("NUMBER OF PERSONS KILLED", "sum"),
         total_injured=("NUMBER OF PERSONS INJURED", "sum"),
+        # Severity score = sum of weighted scores for each crash at that intersection
         severity_score=("weighted_score", "sum")
     )
     .reset_index()
     .sort_values("severity_score", ascending=False)
 )
 
-print(node_summary.head(10))
+# 3) Add normalized severity score (0-1) for easier comparison ---TODO: REVISE
+node_summary["severity_score_norm"] = (
+    node_summary["severity_score"] - node_summary["severity_score"].min()
+) / (node_summary["severity_score"].max() - node_summary["severity_score"].min()
+)
 
 # Merge w intersection names
 node_summary["NODEID"] = node_summary["NODEID"].astype(int)
@@ -205,13 +237,28 @@ results = node_summary.merge(
     how="left"
 )
 
+# Merge w lat/long
+results = results.merge(
+    intersection_coords,
+    on="NODEID",
+    how="left"
+)
+
+# Print first 10 rows of results
 print(results.head(10)[
     ["intersection_name",
-     "crash_count",
-     "total_killed",
-     "total_injured",
-     "severity_score"]
+    "crash_count",
+    "total_killed",
+    "total_injured",
+    "severity_score",
+    "severity_score_norm",
+    "latitude",
+    "longitude",
+    "NODEID"]
 ])
+
+# Save first 500 rows to CSV
+results.head(500).to_csv("intersection_rankings.csv", index=False)
 
 
 # TESTS-------------------------
@@ -220,11 +267,10 @@ print(snapped["snap_dist"].describe())
 # Crash count distribution
 print(node_counts["crash_count"].describe())
 
-results[
-    ["intersection_name",
-     "crash_count",
-     "total_killed",
-     "total_injured",
-     "severity_score"]].to_csv("all_intersections_ranked.csv", index=False)
+
+# Print num crashes for each year for NODEID 36094 (example intersection)
+example_nodeid = 36094
+example_snapped = snapped[snapped["NODEID"] == example_nodeid]
+print(example_snapped.groupby(example_snapped["CRASH DATE"].dt.year).size())
 
 
