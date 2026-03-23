@@ -5,8 +5,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error 
 import pandas as pd 
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, accuracy_score
+from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, f1_score
 from xgboost import XGBClassifier
+import plotly.express as px
 
 
 # %%
@@ -78,6 +79,8 @@ crash_data["is_severe"] = (
 
 cause_col = "CONTRIBUTING FACTOR VEHICLE 1"
 crash_data[cause_col] = crash_data[cause_col].fillna("Unspecified").astype(str).str.strip()
+# Before creating cause_label, filter out rows where cause was "Unspecified"
+crash_data = crash_data[crash_data[cause_col] != "Unspecified"]
 
 #only keep top causes LESS NOISY 
 top_causes = crash_data[cause_col].value_counts().nlargest(5).index.tolist()
@@ -170,16 +173,100 @@ feature_cols = [
     "has_fatal_crashes",
 ]
 
+# Trying to run the model on top 25 ranked intersections, so filter crash_data to just those NODEIDs first.
+# Make a new column for intersection name in crash_data
+crash_data["intersection_name"] = (
+    crash_data["ON STREET NAME"].str.strip().str.upper()
+    + " & " +
+    crash_data["CROSS STREET NAME"].str.strip().str.upper()
+)
+
+# For each NODEID, find the most common intersection name associated with it
+nodeid_to_name = (
+    crash_data.groupby("NODEID")["intersection_name"]
+    .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
+    .reset_index()
+)
+nodeid_to_name.columns = ["NODEID", "intersection_name"]
+
+# Now match top 25 ranked names to NODEIDs
+top_25_names = ranked_list["intersection_name"].head(25).tolist()
+
+# Try both street orderings
+nodeid_to_name["intersection_name_rev"] = (
+    nodeid_to_name["intersection_name"].str.split(" & ").str[1].str.strip()
+    + " & " +
+    nodeid_to_name["intersection_name"].str.split(" & ").str[0].str.strip()
+)
+
+top_25_nodes_df = nodeid_to_name[
+    nodeid_to_name["intersection_name"].isin(top_25_names) |
+    nodeid_to_name["intersection_name_rev"].isin(top_25_names)
+]
+
+top_25_nodes = top_25_nodes_df["NODEID"].tolist()
+
+# Filter crash_data
+crash_data = crash_data[crash_data["NODEID"].isin(top_25_nodes)]
+
 X = model_df[feature_cols].fillna(0)
 y_text = model_df["primary_cause"]
 
 label_encoder = LabelEncoder()
 y = label_encoder.fit_transform(y_text)
 
-X_train, X_test, y_train, y_test, train_idx, test_idx = train_test_split(
-    X, y, model_df.index,
-    test_size=0.2,
-    random_state=42,
-    stratify=y
+# X_train, X_test, y_train, y_test, train_idx, test_idx = train_test_split(
+#     X, y, model_df.index,
+#     test_size=0.2,
+#     random_state=42,
+#     stratify=y
+# )
+
+# Make the XGBoost model, fit it, and predict on the test set
+model = XGBClassifier(
+    n_estimators=100,
+    max_depth=5,
+    learning_rate=0.1,
+    subsample=0.8,
+    colsample_bytree=0.8,
+    random_state=42
 )
+
+model.fit(X, y)
+predictions = model.predict(X)
+predicted_labels = label_encoder.inverse_transform(predictions)
+
+# See results per intersection
+results = model_df[["NODEID"]].copy()
+results["predicted_cause"] = predicted_labels
+results["actual_cause"] = y_text.values
+
+results = results.merge(nodeid_to_name[["NODEID", "intersection_name"]], on="NODEID", how="left")
+print(results[["intersection_name", "actual_cause", "predicted_cause"]])
+
+# Evaluate model performance
+score = f1_score(y, predictions, average="weighted", zero_division=0)
+print(f"Weighted F1 Score: {score:.4f}")
+
+cause_labels = label_encoder.classes_.tolist()
+# print("Cause labels:", cause_labels)
+
+confusion_matrix_result = confusion_matrix(y, predictions, labels=list(range(len(cause_labels))))
+
+figure = px.imshow(
+    confusion_matrix_result,
+    labels=dict(x="Predicted", y="Actual"),
+    x=cause_labels,
+    y=cause_labels
+)
+figure.show()
+# print("Confusion Matrix:")
+# print(confusion_matrix_result)
+
+# accuracy = accuracy_score(y_test, predictions)
+# print(f"Test Accuracy: {accuracy:.4f}")
+# print("\nClassification Report:")
+# print(classification_report(y_test, predictions, target_names=label_encoder.classes_, zero_division=0))
+
 # %%
+
