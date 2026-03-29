@@ -2,10 +2,11 @@
 # %%
 import numpy as np
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error 
 import pandas as pd 
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import classification_report, accuracy_score, confusion_matrix, f1_score
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
+from sklearn.metrics import mean_absolute_error, classification_report, accuracy_score, confusion_matrix, f1_score
 from xgboost import XGBClassifier
 import plotly.express as px
 
@@ -118,9 +119,9 @@ eps = 1e-6
 model_df["night_ratio"] = model_df["night_crash_count"] / (model_df["total_crashes"] + eps)
 model_df["rush_ratio"] = model_df["rush_crash_count"] / (model_df["total_crashes"] + eps)
 model_df["weekend_ratio"] = model_df["weekend_crash_count"] / (model_df["total_crashes"] + eps)
-model_df["ped_injury_ratio"] = model_df["ped_injury_count"] / (model_df["total_crashes"] + eps)
-model_df["bike_injury_ratio"] = model_df["bike_injury_count"] / (model_df["total_crashes"] + eps)
-model_df["fatal_ratio"] = model_df["fatal_crash_count"] / (model_df["total_crashes"] + eps)
+model_df["ped_proportion"] = model_df["ped_injury_count"] / (model_df["total_injured"] + eps)
+model_df["bike_proportion"] = model_df["bike_injury_count"] / (model_df["total_injured"] + eps)
+model_df["severe_ratio"] = model_df["fatal_crash_count"] / (model_df["total_crashes"] + eps)
 
 # simple presence flags
 model_df["has_ped_crashes"] = (model_df["ped_injury_count"] > 0).astype(int)
@@ -164,16 +165,16 @@ feature_cols = [
     "night_ratio",
     "rush_ratio",
     "weekend_ratio",
-    "ped_injury_ratio",
-    "bike_injury_ratio",
-    "fatal_ratio",
+    "ped_proportion",
+    "bike_proportion",
+    "severe_ratio",
     "has_ped_crashes",
     "has_bike_crashes",
     "has_night_crashes",
     "has_fatal_crashes",
 ]
 
-# Trying to run the model on top 25 ranked intersections, so filter crash_data to just those NODEIDs first.
+# Run the model on top 500 ranked intersections, so filter crash_data to just those NODEIDs first.
 # Make a new column for intersection name in crash_data
 crash_data["intersection_name"] = (
     crash_data["ON STREET NAME"].str.strip().str.upper()
@@ -189,8 +190,8 @@ nodeid_to_name = (
 )
 nodeid_to_name.columns = ["NODEID", "intersection_name"]
 
-# Now match top 25 ranked names to NODEIDs
-top_25_names = ranked_list["intersection_name"].head(25).tolist()
+# Now match top 500 ranked names to NODEIDs
+top_500_names = ranked_list["intersection_name"].head(500).tolist()
 
 # Try both street orderings
 nodeid_to_name["intersection_name_rev"] = (
@@ -199,15 +200,15 @@ nodeid_to_name["intersection_name_rev"] = (
     nodeid_to_name["intersection_name"].str.split(" & ").str[0].str.strip()
 )
 
-top_25_nodes_df = nodeid_to_name[
-    nodeid_to_name["intersection_name"].isin(top_25_names) |
-    nodeid_to_name["intersection_name_rev"].isin(top_25_names)
+top_500_nodes_df = nodeid_to_name[
+    nodeid_to_name["intersection_name"].isin(top_500_names) |
+    nodeid_to_name["intersection_name_rev"].isin(top_500_names)
 ]
 
-top_25_nodes = top_25_nodes_df["NODEID"].tolist()
+top_500_nodes = top_500_nodes_df["NODEID"].tolist()
 
 # Filter crash_data
-crash_data = crash_data[crash_data["NODEID"].isin(top_25_nodes)]
+crash_data = crash_data[crash_data["NODEID"].isin(top_500_nodes)]
 
 X = model_df[feature_cols].fillna(0)
 y_text = model_df["primary_cause"]
@@ -222,19 +223,30 @@ y = label_encoder.fit_transform(y_text)
 #     stratify=y
 # )
 
-# Make the XGBoost model, fit it, and predict on the test set
-model = XGBClassifier(
-    n_estimators=100,
-    max_depth=5,
-    learning_rate=0.1,
-    subsample=0.8,
-    colsample_bytree=0.8,
-    random_state=42
+# Preprocessing: One-hot encode categorical features and standardize numeric features
+preprocessor = ColumnTransformer(
+    transformers=[
+        ('num', StandardScaler(), feature_cols)
+    ]
 )
+
+# Pipeline: Preprocessor + Classifier
+model = Pipeline([
+    ('preprocessor', preprocessor),
+    ('classifier', XGBClassifier(
+        n_estimators=500,
+        max_depth=10,
+        learning_rate=0.3,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42
+    ))
+])
 
 model.fit(X, y)
 predictions = model.predict(X)
 predicted_labels = label_encoder.inverse_transform(predictions)
+
 
 # See results per intersection
 results = model_df[["NODEID"]].copy()
@@ -246,10 +258,20 @@ print(results[["intersection_name", "actual_cause", "predicted_cause"]])
 
 # Evaluate model performance
 score = f1_score(y, predictions, average="weighted", zero_division=0)
-print(f"Weighted F1 Score: {score:.4f}")
+print(f"Weighted F1 Score: {score:.4f}") 
+# 0.4590 when max_depth = 5
+# 0.5963 when max_depth = 10
+# 0.7289 when max_depth =10 and n_estimators = 500
+# 0.7363 when max_depth =10, n_estimators = 500, and learning_rate = 0.3
+
+mean_absolute_error_score = mean_absolute_error(y, predictions)
+print(f"Mean Absolute Error: {mean_absolute_error_score:.4f}") 
+# 1.2415 when max_depth = 5 since it is > 1, there is significant error in prediction
+# 0.9205 when max_depth = 10 getting better
+# 0.6280 when max_depth =10 and n_estimators = 500 
+# 0.6065 when max_depth =10, n_estimators = 500, and learning_rate = 0.3
 
 cause_labels = label_encoder.classes_.tolist()
-# print("Cause labels:", cause_labels)
 
 confusion_matrix_result = confusion_matrix(y, predictions, labels=list(range(len(cause_labels))))
 
@@ -260,13 +282,6 @@ figure = px.imshow(
     y=cause_labels
 )
 figure.show()
-# print("Confusion Matrix:")
-# print(confusion_matrix_result)
-
-# accuracy = accuracy_score(y_test, predictions)
-# print(f"Test Accuracy: {accuracy:.4f}")
-# print("\nClassification Report:")
-# print(classification_report(y_test, predictions, target_names=label_encoder.classes_, zero_division=0))
 
 # %%
 
