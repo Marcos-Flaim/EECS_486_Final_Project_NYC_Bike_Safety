@@ -25,7 +25,7 @@ import os
 
 # Load CSV file in chunks
 df_iter = pd.read_csv(
-    "crash_data.csv",
+    "../data/crash_data.csv",
     chunksize=200000,
     dtype={"ZIP CODE": str},
     low_memory=False
@@ -69,7 +69,7 @@ crash_gdf = gpd.GeoDataFrame(
 crash_gdf = crash_gdf.to_crs(2263)
 
 # Get path to lion.gdb
-gdb_path = "lion/lion.gdb"
+gdb_path = "../data/lion/lion.gdb"
 
 # Load the node layer
 nodes = gpd.read_file(gdb_path, layer="node")

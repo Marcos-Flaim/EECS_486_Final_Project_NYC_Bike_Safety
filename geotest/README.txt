@@ -1,15 +1,17 @@
 intersections.py is the current working main file
 (geotest.py and importtest.py were earlier iterations)
 
+Edit: Ensure these downloads are in /data folder
+
 Need to download:
-- Crash data (NYC Open Data)
+- Crash data (NYC Open Data) (name crash_data.csv)
 https://data.cityofnewyork.us/Public-Safety/Motor-Vehicle-Collisions-Crashes/h9gi-nx95/about_data
 
 Need to unzip:
 - NYC centerline data
 https://data.cityofnewyork.us/City-Government/Centerline/inkn-q76z/about_data
 
-- NYC LION data
+- NYC LION data (name folder lion)
 https://data.cityofnewyork.us/City-Government/LION/2v4z-66xt/about_data
 
 To run:
