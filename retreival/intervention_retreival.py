@@ -72,4 +72,96 @@ def main():
     print("\nSUCCESS! Saved 'Master_Top_500_Intersections.csv'.")
     print(master_df.head())
 
-main()
+
+def evaluate_precision_at_k():
+    print("\n--- RUNNING EVALUATION (P@K) ---")
+    doc_embeddings = createEmbeddings()
+    
+    # Load predictions to get unique causes
+    predictions_df = pd.read_csv("../data/intersection_predictions.csv")
+    unique_causes = predictions_df["predicted_cause"].unique()
+    
+    # --- THE GROUND TRUTH MAPPING ---
+    ground_truth = {
+        "Failure to Yield Right-of-Way": [
+            "Restrict Left Turns", 
+            "Leading Pedestrian Interval (LPI)", 
+            "No-Turn-on-Red Restrictions",
+            "Protected Left-Turn Phase",
+            "Install Marked Crosswalks"
+        ],
+        "Driver Inattention/Distraction": [
+            "Turn Calming", 
+            "Install Advance Warning Signals", 
+            "Dynamic Speed Feedback Signs",
+            "High-Visibility Crosswalk Markings",
+            "Rectangular Rapid Flashing Beacons (RRFB)"
+        ],
+        "Backing Unsafely": [
+            "Intersection Daylighting", 
+            "Remove Visual Obstructions", 
+            "Improve Street Lighting",
+            "Corner Tightening / Reduced Turning Radius"
+        ], 
+        "Following Too Closely": [
+            "Improve Signal Timing", 
+            "High-Friction Surface Treatment", 
+            "Install Advance Warning Signals",
+            "Speed Humps or Speed Tables"
+        ], 
+        "Other Vehicular": [
+            "Convert to Roundabout",
+            "Add All-Way Stop Control",
+            "Speed Humps or Speed Tables",
+            "Reduce Speed Limits"
+        ],
+        "Other": [
+            "Convert to Roundabout",
+            "Add All-Way Stop Control",
+            "Reduce Speed Limits"
+        ]
+    }
+    
+    k_values = [1, 3, 5]
+    results = {cause: {f"P@{k}": 0.0 for k in k_values} for cause in unique_causes if cause in ground_truth}
+    
+    for cause in unique_causes:
+        if cause not in ground_truth:
+            continue
+            
+        query_embedding = model.encode([cause])
+        similarities = cosine_similarity(query_embedding, doc_embeddings)[0]
+        
+        # Sort indices by highest similarity score
+        ranked_indices = np.argsort(similarities)[::-1]
+        ranked_titles = data["Title"].iloc[ranked_indices].tolist()
+        
+        # Add this print statement to debug!
+        print(f"\nFor '{cause}', BERT's actual Top 5 are: {ranked_titles[:5]}")
+        # Get the valid interventions for this specific cause
+        valid_interventions = ground_truth[cause]
+        
+        # Calculate P@K
+        for k in k_values:
+            top_k_titles = ranked_titles[:k]
+            hits = sum(1 for title in top_k_titles if title in valid_interventions)
+            results[cause][f"P@{k}"] = hits / k
+            
+    if not results:
+        print("No matching causes found in ground_truth. Please update the dictionary.")
+        return
+        
+    # Create DataFrame and calculate Macro-Average
+    results_df = pd.DataFrame.from_dict(results, orient='index')
+    results_df.index.name = 'Predicted Crash Cause'
+    
+    avg_row = results_df.mean().to_frame("Macro-Average").T
+    final_df = pd.concat([results_df, avg_row])
+    
+    # Print the table formatted for Markdown/LaTeX
+    print("\n--- PUBLICATION READY TABLE ---")
+    print(final_df.to_markdown(floatfmt=".2f"))
+
+if __name__ == "__main__":
+    main()
+    evaluate_precision_at_k()
