@@ -4,6 +4,8 @@ import numpy as np
 from shapely.geometry import Point
 import time
 import fiona
+from pathlib import Path
+import os
 
 # 10am, 2/27: Using LION node data instead of street centerline
 # shapefile for intersection-specific data
@@ -66,15 +68,8 @@ crash_gdf = gpd.GeoDataFrame(
 
 crash_gdf = crash_gdf.to_crs(2263)
 
-<<<<<<< HEAD
-# List layers inside lion.gdb
-gdb_path = "lion/lion.gdb"
-layers = fiona.listlayers(gdb_path)
-print("Layers in lion.gdb:", layers)
-=======
 # Get path to lion.gdb
 gdb_path = "lion/lion.gdb"
->>>>>>> 01b98d021ed5c1dc67ad3024249fd5bada921fd8
 
 # Load the node layer
 nodes = gpd.read_file(gdb_path, layer="node")
@@ -264,22 +259,16 @@ print(results.head(10)[
     "NODEID"]
 ])
 
-<<<<<<< HEAD
-#uma added: print to "all_intersections_ranked.csv"
-results[
-    ["intersection_name",
-     "crash_count",
-     "total_killed",
-     "total_injured",
-     "severity_score"]].to_csv("all_intersections_ranked.csv", index=False)
-=======
-# Save first 500 rows to CSV
-results.head(500).to_csv("intersection_rankings.csv", index=False)
+# sam added: need a centralized location for all the data since work is compartmentalized
+if not Path('../data').exists():
+    os.mkdir('../data')
 
->>>>>>> 01b98d021ed5c1dc67ad3024249fd5bada921fd8
+# Save first 500 rows to CSV
+results.head(500).to_csv("../data/intersection_rankings.csv", index=False)
+
 
 #uma added: want a crash_to_node_map so we usee same intersection break down in model 
-snapped[['COLLISION_ID', 'NODEID', 'snap_dist']].to_csv("crash_to_node_map.csv", index=False)
+snapped[['COLLISION_ID', 'NODEID', 'snap_dist']].to_csv("../data/crash_to_node_map.csv", index=False)
 # TESTS-------------------------
 # Snapping quality
 print(snapped["snap_dist"].describe())

@@ -1,3 +1,3 @@
-geotest/crash_data.csv
-geotest/nyclion/*
+data/crash_data.csv
+geotest/lion/*
 nyc_centerline.shp

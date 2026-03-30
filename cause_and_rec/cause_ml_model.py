@@ -2,6 +2,7 @@
 # %%
 import numpy as np
 from sklearn.model_selection import train_test_split
+from sklearn.utils.class_weight import compute_class_weight
 import pandas as pd 
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
@@ -14,9 +15,9 @@ import plotly.express as px
 # %%
 #DOWNLOAD DATA AND MERGE NODE ID WITH THE CRASH DATA 
 
-raw_crash_data = pd.read_csv("crash_data.csv", low_memory=False)
-node_map = pd.read_csv("crash_to_node_map.csv")
-ranked_list = pd.read_csv("all_intersections_ranked.csv")
+raw_crash_data = pd.read_csv("../data/crash_data.csv", low_memory=False)
+node_map = pd.read_csv("../data/crash_to_node_map.csv")
+ranked_list = pd.read_csv("../data/intersection_rankings.csv")
 
 #clean headers
 raw_crash_data.columns = raw_crash_data.columns.str.strip()
@@ -87,6 +88,9 @@ crash_data = crash_data[crash_data[cause_col] != "Unspecified"]
 top_causes = crash_data[cause_col].value_counts().nlargest(5).index.tolist()
 print("Top causes:", top_causes)
 
+# delete them from the dataframe completely during your preprocessing step
+useless_labels = ["Unspecified", "Other Vehicular", "Following Too Closely"]
+crash_data = crash_data[~crash_data[cause_col].isin(useless_labels)]
 
 crash_data["cause_label"] = crash_data[cause_col].apply(
     lambda x: x if x in top_causes else "Other"
@@ -234,16 +238,32 @@ preprocessor = ColumnTransformer(
 model = Pipeline([
     ('preprocessor', preprocessor),
     ('classifier', XGBClassifier(
-        n_estimators=500,
-        max_depth=10,
-        learning_rate=0.3,
+        n_estimators=300,        # Reduced to prevent memorization
+        max_depth=6,             # Reduced to force general rule-learning
+        learning_rate=0.1,       # Slowed down so it learns minority classes carefully
         subsample=0.8,
         colsample_bytree=0.8,
+        min_child_weight=3,      # NEW: Prevents hyper-specific edge cases
+        gamma=0.1,               # NEW: Penalizes the model for making useless tree branches
         random_state=42
     ))
 ])
 
-model.fit(X, y)
+# Sam: Calculate weights: Rare classes get high weights, common classes get low weights
+# Get the standard balanced weights for each unique class
+classes = np.unique(y)
+raw_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y)
+
+# "Soften" the weights using a square root to prevent over-correction
+soft_weights = np.sqrt(raw_weights)
+weight_dict = {c: w for c, w in zip(classes, soft_weights)}
+
+# Map these soft weights to every single row in your dataset
+sample_weights = np.array([weight_dict[label] for label in y])
+# Pass the weights to the XGBoost step inside your pipeline
+# The 'classifier__' prefix tells the pipeline to send this specifically to XGBoost
+model.fit(X, y, classifier__sample_weight=sample_weights)
+
 predictions = model.predict(X)
 predicted_labels = label_encoder.inverse_transform(predictions)
 
@@ -281,7 +301,12 @@ figure = px.imshow(
     x=cause_labels,
     y=cause_labels
 )
-figure.show()
+# sam: commented this out because I found the pop up annoying
+# figure.show()
+
+# sam: need to have the data somewhere
+results.to_csv("../data/intersection_predictions.csv", index=False)
+print("Saved predictions to ../data/intersection_predictions.csv")
 
 # %%
 
