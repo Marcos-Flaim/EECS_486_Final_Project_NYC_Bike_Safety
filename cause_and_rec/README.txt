@@ -1,7 +1,9 @@
 Files Needed:
 
+Edit: Ensure these downloads/outputs in /data folder 
+
 crash_data.csv = NYC open data large crash metadata file 
-all_intersections_ranked.csv = file output from intersections.py
+intersection_rankings.csv = file output from intersections.py
 crash_to_node_map.csv = file outut from intersections.py
 
 Steps to run code:

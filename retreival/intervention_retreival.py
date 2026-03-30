@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 # Load a pretrained Sentence Transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 # collect all the data from the csv
-data = pd.read_csv("Intervention Document.csv")
+data = pd.read_csv("../data/Intervention Document.csv")
     
 def readCSV():
     # extract the column containing the keywords and title
