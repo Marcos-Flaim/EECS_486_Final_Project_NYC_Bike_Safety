@@ -7,7 +7,7 @@ import csv
 # Load a pretrained Sentence Transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-Intervention_Document = pd.read_csv("../data/Intervention Document.csv")
+Intervention_Document = pd.read_csv("Intervention_Document.csv")
 def readCSV():
     # extract the column containing the keywords and title
     keywords = Intervention_Document["Keywords"].tolist()
