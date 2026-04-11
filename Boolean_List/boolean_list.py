@@ -9,7 +9,7 @@ def within_15_meters(lat1, long1, lat2, long2):
 
 def main():
     #create list(of lists) with intersections and their properties(booleans)
-    ranked_intersections_file = open("Top_500_Intersections.csv", "rt")
+    ranked_intersections_file = open("../data/Top_500_Intersections.csv", "rt")
     csv_parse = csv.reader(ranked_intersections_file)
     output = []
     j=0
@@ -54,7 +54,7 @@ def main():
                     x[12] = "1"
                     break
     
-    output_file = open("boolean_list_output.csv", "w")
+    output_file = open("../data/boolean_list_output.csv", "w")
     output_file.write("NODEID,crash_count,total_killed,total_injured,severity_score,severity_score_norm,intersection_name,latitude,longitude,Has_Enhanced_Crossing,Has_Leading_Pedestrian_Signal,Has_Turn_Traffic_Calming,Has_SIP\n")
     writer = csv.writer(output_file)
     writer.writerows(output)
