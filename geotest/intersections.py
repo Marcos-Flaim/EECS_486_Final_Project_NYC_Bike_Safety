@@ -6,6 +6,8 @@ import time
 import fiona
 from pathlib import Path
 import os
+import requests
+import json
 
 # 10am, 2/27: Using LION node data instead of street centerline
 # shapefile for intersection-specific data
@@ -23,53 +25,102 @@ import os
 # (1) revise if we want to drop non-intersecctions (ex. Van Wyck expwy) 
 # (2) rank by severity (formula below is starting point)
 
-# Load CSV file in chunks
-df_iter = pd.read_csv(
-    "../data/crash_data.csv",
-    chunksize=200000,
-    dtype={"ZIP CODE": str},
-    low_memory=False
-)
+# Instead of loading CSV file in chunks, use
+# requests.get to pull data from API
 
-clean_chunks = []
+# API → dataframe chunk → clean → append/save → discard
 
-for chunk in df_iter:
+# Load in crash data from API in chunks, clean, and convert to GeoDataFrame
 
-    chunk = chunk.dropna(subset=['LATITUDE','LONGITUDE'])
+limit = 100000 # Adjust as needed
+offset = 0
+max_rows = 2500000
 
-    chunk = chunk[
-        (chunk['LATITUDE'] != 0) &
-        (chunk['LONGITUDE'] != 0)
+gdf_list = []
+
+while offset < max_rows:
+    url = f"https://data.cityofnewyork.us/resource/h9gi-nx95.json?$limit={limit}&$offset={offset}"
+    response = requests.get(url)
+    
+    if response.status_code != 200:
+        print(f"Error fetching data: {response.status_code}")
+        break
+    
+    data_chunk = response.json()
+    
+    if not data_chunk:
+        print("No more data to fetch.")
+        break
+    
+    df_chunk = pd.DataFrame(data_chunk)
+    
+    # Clean and convert to GeoDataFrame
+    df_chunk = df_chunk.dropna(subset=['latitude','longitude'])
+
+    # Convert coords to float
+    df_chunk['latitude'] = df_chunk['latitude'].astype(float)
+    df_chunk['longitude'] = df_chunk['longitude'].astype(float)
+
+    # Convert numeric cols
+    numeric_cols = [
+        'number_of_persons_killed',
+        'number_of_persons_injured'
     ]
 
-    clean_chunks.append(chunk)
+    for col in numeric_cols:
+        if col in df_chunk.columns:
+            df_chunk[col] = pd.to_numeric(df_chunk[col], errors='coerce')
 
-df = pd.concat(clean_chunks)
-
-# Filter to NYC area
-df = df[
-    (df['LATITUDE'].between(40.4, 41.0)) &
-    (df['LONGITUDE'].between(-74.3, -73.6))
-]
-
-# Create GeoDataFrame with each crash instance
-geometry = [
-    Point(xy) for xy in zip(
-        df['LONGITUDE'],
-        df['LATITUDE']
+    df_chunk.columns = (
+        df_chunk.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_")
     )
-]
 
-crash_gdf = gpd.GeoDataFrame(
-    df,
-    geometry=geometry,
-    crs="EPSG:4326"
-)
+    df_chunk = df_chunk[
+        (df_chunk['latitude'] != 0) &
+        (df_chunk['longitude'] != 0)
+    ]
+
+    # Filter to NYC area
+    df_chunk = df_chunk[
+        (df_chunk['latitude'].between(40.4, 41)) &
+        (df_chunk['longitude'].between(-74.3, -73.6))
+    ]
+    
+    geometry = [
+        Point(xy) for xy in zip(
+            df_chunk['longitude'],
+            df_chunk['latitude']
+        )
+    ]
+    
+    gdf_chunk = gpd.GeoDataFrame(
+        df_chunk,
+        geometry=geometry,
+        crs="EPSG:4326"
+    )
+    
+    gdf_list.append(gdf_chunk)
+
+    print(f"Fetched {len(df_chunk)} records. Total so far: {len(pd.concat(gdf_list))}")
+    
+    offset += limit
+    time.sleep(1)  # Be respectful of API rate limits
+
+crash_gdf = pd.concat(gdf_list, ignore_index=True)
 
 crash_gdf = crash_gdf.to_crs(2263)
 
-# Get path to lion.gdb
-gdb_path = "../data/lion/lion.gdb"
+# Get path to lion.gdb (***change if necessary)
+# Should be in same folder as this script, but within a 
+# "lion" subfolder
+
+# Path to current directory
+current_dir = Path(__file__).parent
+# Path to lion.gdb
+gdb_path = current_dir / "lion" / "lion.gdb"
 
 # Load the node layer
 nodes = gpd.read_file(gdb_path, layer="node")
@@ -186,11 +237,11 @@ results = results.merge(
 # Recency weighting - more recent crashes weighted higher
 
 # 1) Calculate weighted score (for each crash)
-snapped["CRASH DATE"] = pd.to_datetime(snapped["CRASH DATE"])
+snapped["crash_date"] = pd.to_datetime(snapped["crash_date"])
 
 # Compute age in yrs
 today = pd.Timestamp.today()
-snapped["age_years"] = (today - snapped["CRASH DATE"]).dt.days / 365.25
+snapped["age_years"] = (today - snapped["crash_date"]).dt.days / 365.25
 
 # Exp decay parameter
 lambda_ = 0.3 #TODO:REVISE/TUNE--------------
@@ -199,8 +250,8 @@ snapped["recency_weight"] = np.exp(-lambda_ * snapped["age_years"])
 
 #Base severity per crash
 snapped["base_severity"] = (
-    10 * snapped["NUMBER OF PERSONS KILLED"].fillna(0) +
-    3 * snapped["NUMBER OF PERSONS INJURED"].fillna(0) +
+    10 * snapped["number_of_persons_killed"].fillna(0) +
+    3 * snapped["number_of_persons_injured"].fillna(0) +
     1
 )
 
@@ -214,8 +265,8 @@ node_summary = (
     snapped.groupby("NODEID")
     .agg(
         crash_count=("NODEID", "size"),
-        total_killed=("NUMBER OF PERSONS KILLED", "sum"),
-        total_injured=("NUMBER OF PERSONS INJURED", "sum"),
+        total_killed=("number_of_persons_killed", "sum"),
+        total_injured=("number_of_persons_injured", "sum"),
         # Severity score = sum of weighted scores for each crash at that intersection
         severity_score=("weighted_score", "sum")
     )
@@ -268,7 +319,7 @@ results.head(500).to_csv("../data/intersection_rankings.csv", index=False)
 
 
 #uma added: want a crash_to_node_map so we usee same intersection break down in model 
-snapped[['COLLISION_ID', 'NODEID', 'snap_dist']].to_csv("../data/crash_to_node_map.csv", index=False)
+snapped[['collision_id', 'NODEID', 'snap_dist']].to_csv("../data/crash_to_node_map.csv", index=False)
 # TESTS-------------------------
 # Snapping quality
 print(snapped["snap_dist"].describe())
@@ -279,6 +330,6 @@ print(node_counts["crash_count"].describe())
 # Print num crashes for each year for NODEID 36094 (example intersection)
 example_nodeid = 36094
 example_snapped = snapped[snapped["NODEID"] == example_nodeid]
-print(example_snapped.groupby(example_snapped["CRASH DATE"].dt.year).size())
+print(example_snapped.groupby(example_snapped["crash_date"].dt.year).size())
 
 
