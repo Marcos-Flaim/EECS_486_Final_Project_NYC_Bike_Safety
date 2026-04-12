@@ -10,33 +10,37 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler
 from sklearn.metrics import mean_absolute_error, classification_report, accuracy_score, confusion_matrix, f1_score
 from xgboost import XGBClassifier
 import plotly.express as px
+from get_rankings.crash_data_loader import load_crash_data
 
 
 # %%
 #DOWNLOAD DATA AND MERGE NODE ID WITH THE CRASH DATA 
 
-raw_crash_data = pd.read_csv("../data/crash_data.csv", low_memory=False)
+raw_crash_data = load_crash_data()
 node_map = pd.read_csv("../data/crash_to_node_map.csv")
 ranked_list = pd.read_csv("../data/intersection_rankings.csv")
 
 #clean headers
 raw_crash_data.columns = raw_crash_data.columns.str.strip()
 node_map.columns = node_map.columns.str.strip()
-ranked_list.columns = ranked_list.columns.str.strip()
+ranked_list.columns = ranked_list.columns.str.strip().str.lower()
+
+# Get top 500 ranked intersections
+top_intersections = ranked_list.head(500)["nodeid"].tolist()
 
 #add nodeid to raw crash data
 
-raw_crash_data["COLLISION_ID"] = pd.to_numeric(raw_crash_data["COLLISION_ID"], errors="coerce")
-node_map["COLLISION_ID"] = pd.to_numeric(node_map["COLLISION_ID"], errors="coerce")
+raw_crash_data["collision_id"] = pd.to_numeric(raw_crash_data["collision_id"], errors="coerce")
+node_map["collision_id"] = pd.to_numeric(node_map["collision_id"], errors="coerce")
 
-raw_crash_data = raw_crash_data.dropna(subset=["COLLISION_ID"])
-node_map = node_map.dropna(subset=["COLLISION_ID"])
+raw_crash_data = raw_crash_data.dropna(subset=["collision_id"])
+node_map = node_map.dropna(subset=["collision_id"])
 
-raw_crash_data["COLLISION_ID"] = raw_crash_data["COLLISION_ID"].astype("int64")
-node_map["COLLISION_ID"] = node_map["COLLISION_ID"].astype("int64")
+raw_crash_data["collision_id"] = raw_crash_data["collision_id"].astype("int64")
+node_map["collision_id"] = node_map["collision_id"].astype("int64")
 
 #merge crash rows to NODEID
-crash_data = raw_crash_data.merge(node_map[["COLLISION_ID", "NODEID"]], on="COLLISION_ID", how="inner")
+crash_data = raw_crash_data.merge(node_map[["collision_id", "NODEID"]], on="collision_id", how="inner")
 #remove duplicate columns
 crash_data = crash_data.loc[:, ~crash_data.columns.duplicated()]
 print("Merged rows:", len(crash_data))
@@ -49,37 +53,37 @@ print("Unique intersections:", crash_data["NODEID"].nunique())
 
 #convert crash date to a datetime, 
 # and make some booleans for pedestrian injury etc. 
-#boolean about rush hour, weekend, and night
+#boolean about rush hourmonth, weekend, and night
 
-crash_data["CRASH DATE"] = pd.to_datetime(crash_data["CRASH DATE"], errors="coerce")
-crash_data["CRASH TIME"] = pd.to_datetime(crash_data["CRASH TIME"], format="%H:%M", errors="coerce")
+crash_data["crash_date"] = pd.to_datetime(crash_data["crash_date"], errors="coerce")
+crash_data["crash_time"] = pd.to_datetime(crash_data["crash_time"], format="%H:%M", errors="coerce")
 
-crash_data["hour"] = crash_data["CRASH TIME"].dt.hour
-crash_data["month"] = crash_data["CRASH DATE"].dt.month
-crash_data["year"] = crash_data["CRASH DATE"].dt.year
-crash_data["dayofweek"] = crash_data["CRASH DATE"].dt.dayofweek
+crash_data["hour"] = crash_data["crash_time"].dt.hour
+crash_data["month"] = crash_data["crash_date"].dt.month
+crash_data["year"] = crash_data["crash_date"].dt.year
+crash_data["dayofweek"] = crash_data["crash_date"].dt.dayofweek
 
 crash_data["is_night"] = ((crash_data["hour"] >= 20) | (crash_data["hour"] <= 5)).astype(int)
 crash_data["is_rush_hour"] = crash_data["hour"].isin([7, 8, 9, 16, 17, 18]).astype(int)
 crash_data["is_weekend"] = (crash_data["dayofweek"] >= 5).astype(int)
 
-crash_data["is_pedestrian_injury"] = (crash_data["NUMBER OF PEDESTRIANS INJURED"] > 0).astype(int)
-crash_data["is_pedestrian_death"] = (crash_data["NUMBER OF PEDESTRIANS KILLED"] > 0).astype(int)
-crash_data["is_bike_injury"] = (crash_data["NUMBER OF CYCLIST INJURED"] > 0).astype(int)
-crash_data["is_bike_death"] = (crash_data["NUMBER OF CYCLIST KILLED"] > 0).astype(int)
-crash_data["is_motorist_injury"] = (crash_data["NUMBER OF MOTORIST INJURED"] > 0).astype(int)
-crash_data["is_fatal"] = (crash_data["NUMBER OF PERSONS KILLED"] > 0).astype(int)
+crash_data["is_pedestrian_injury"] = (crash_data["number_of_pedestrians_injured"] > 0).astype(int)
+crash_data["is_pedestrian_death"] = (crash_data["number_of_pedestrians_killed"] > 0).astype(int)
+crash_data["is_bike_injury"] = (crash_data["number_of_cyclist_injured"] > 0).astype(int)
+crash_data["is_bike_death"] = (crash_data["number_of_cyclist_killed"] > 0).astype(int)
+crash_data["is_motorist_injury"] = (crash_data["number_of_motorist_injured"] > 0).astype(int)
+crash_data["is_fatal"] = (crash_data["number_of_persons_killed"] > 0).astype(int)
 
 crash_data["is_severe"] = (
-    (crash_data["NUMBER OF PERSONS KILLED"] > 0) |
-    (crash_data["NUMBER OF PERSONS INJURED"] >= 2)
+    (crash_data["number_of_persons_killed"] > 0) |
+    (crash_data["number_of_persons_injured"] >= 2)
 ).astype(int)
 
 # %%
 #USE CONTRIBUTING FACTOR VEHICLE 1 BECUASE IT IS LESS NOISEY .
 #WE CAN ADD CONTR. FAC. 2-4 LATER TO C IF IT IMPROVES MODEL 
 
-cause_col = "CONTRIBUTING FACTOR VEHICLE 1"
+cause_col = "contributing_factor_vehicle_1"
 crash_data[cause_col] = crash_data[cause_col].fillna("Unspecified").astype(str).str.strip()
 # Before creating cause_label, filter out rows where cause was "Unspecified"
 crash_data = crash_data[crash_data[cause_col] != "Unspecified"]
@@ -103,9 +107,9 @@ print(crash_data["cause_label"].value_counts())
 #AGGREGATE FEATURES BY THE INTERSECTION OR NODEIDE
 # AND CREATE NUMERIC FEATURES /RATIOS BC IT WORLS BETTER WITH XGB 
 model_df = crash_data.groupby("NODEID").agg(
-    total_crashes=("COLLISION_ID", "count"),
-    total_injured=("NUMBER OF PERSONS INJURED", "sum"),
-    total_killed=("NUMBER OF PERSONS KILLED", "sum"),
+    total_crashes=("collision_id", "count"),
+    total_injured=("number_of_persons_injured", "sum"),
+    total_killed=("number_of_persons_killed", "sum"),
     ped_injury_count=("is_pedestrian_injury", "sum"),
     ped_death_count=("is_pedestrian_death", "sum"),
     bike_injury_count=("is_bike_injury", "sum"),
@@ -114,7 +118,7 @@ model_df = crash_data.groupby("NODEID").agg(
     rush_crash_count=("is_rush_hour", "sum"),
     weekend_crash_count=("is_weekend", "sum"),
     fatal_crash_count=("is_fatal", "sum"),
-    avg_injured=("NUMBER OF PERSONS INJURED", "mean")
+    avg_injured=("number_of_persons_injured", "mean")
 ).reset_index()
 
 #create ratios (works better w xgb)
@@ -179,40 +183,7 @@ feature_cols = [
 ]
 
 # Run the model on top 500 ranked intersections, so filter crash_data to just those NODEIDs first.
-# Make a new column for intersection name in crash_data
-crash_data["intersection_name"] = (
-    crash_data["ON STREET NAME"].str.strip().str.upper()
-    + " & " +
-    crash_data["CROSS STREET NAME"].str.strip().str.upper()
-)
 
-# For each NODEID, find the most common intersection name associated with it
-nodeid_to_name = (
-    crash_data.groupby("NODEID")["intersection_name"]
-    .agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else None)
-    .reset_index()
-)
-nodeid_to_name.columns = ["NODEID", "intersection_name"]
-
-# Now match top 500 ranked names to NODEIDs
-top_500_names = ranked_list["intersection_name"].head(500).tolist()
-
-# Try both street orderings
-nodeid_to_name["intersection_name_rev"] = (
-    nodeid_to_name["intersection_name"].str.split(" & ").str[1].str.strip()
-    + " & " +
-    nodeid_to_name["intersection_name"].str.split(" & ").str[0].str.strip()
-)
-
-top_500_nodes_df = nodeid_to_name[
-    nodeid_to_name["intersection_name"].isin(top_500_names) |
-    nodeid_to_name["intersection_name_rev"].isin(top_500_names)
-]
-
-top_500_nodes = top_500_nodes_df["NODEID"].tolist()
-
-# Filter crash_data
-crash_data = crash_data[crash_data["NODEID"].isin(top_500_nodes)]
 
 X = model_df[feature_cols].fillna(0)
 y_text = model_df["primary_cause"]
@@ -273,7 +244,17 @@ results = model_df[["NODEID"]].copy()
 results["predicted_cause"] = predicted_labels
 results["actual_cause"] = y_text.values
 
-results = results.merge(nodeid_to_name[["NODEID", "intersection_name"]], on="NODEID", how="left")
+# Now that predictions are made:
+# Filter model_df to only include top 500 intersections
+model_df = model_df[model_df["NODEID"].isin(top_intersections)]
+results = results[results["NODEID"].isin(top_intersections)]
+
+results = results.merge(
+    ranked_list[["nodeid", "intersection_name"]],
+    left_on="NODEID",
+    right_on="nodeid",
+    how="left"
+)
 print(results[["intersection_name", "actual_cause", "predicted_cause"]])
 
 # Evaluate model performance

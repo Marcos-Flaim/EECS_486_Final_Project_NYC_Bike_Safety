@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import requests
 import json
+from get_rankings.crash_data_loader import load_crash_data
 
 # Using LION node data instead of street centerline
 # shapefile for intersection-specific data
@@ -29,85 +30,16 @@ import json
 
 # Load in crash data from API in chunks, clean, and convert to GeoDataFrame
 
-limit = 100000
-offset = 0
-max_rows = 2500000
+crash_gdf = load_crash_data()
 
-gdf_list = []
-
-while offset < max_rows:
-    url = f"https://data.cityofnewyork.us/resource/h9gi-nx95.json?$limit={limit}&$offset={offset}"
-    response = requests.get(url)
-    
-    if response.status_code != 200:
-        print(f"Error fetching data: {response.status_code}")
-        break
-    
-    data_chunk = response.json()
-    
-    if not data_chunk:
-        print("No more data to fetch.")
-        break
-    
-    df_chunk = pd.DataFrame(data_chunk)
-    
-    # Clean and convert to GeoDataFrame
-    df_chunk = df_chunk.dropna(subset=['latitude','longitude'])
-
-    # Convert coords to float
-    df_chunk['latitude'] = df_chunk['latitude'].astype(float)
-    df_chunk['longitude'] = df_chunk['longitude'].astype(float)
-
-    # Convert numeric cols
-    numeric_cols = [
-        'number_of_persons_killed',
-        'number_of_persons_injured'
-    ]
-
-    for col in numeric_cols:
-        if col in df_chunk.columns:
-            df_chunk[col] = pd.to_numeric(df_chunk[col], errors='coerce')
-
-    df_chunk.columns = (
-        df_chunk.columns
-        .str.strip()
-        .str.lower()
-        .str.replace(" ", "_")
-    )
-
-    df_chunk = df_chunk[
-        (df_chunk['latitude'] != 0) &
-        (df_chunk['longitude'] != 0)
-    ]
-
-    # Filter to NYC area
-    df_chunk = df_chunk[
-        (df_chunk['latitude'].between(40.4, 41)) &
-        (df_chunk['longitude'].between(-74.3, -73.6))
-    ]
-    
-    geometry = [
-        Point(xy) for xy in zip(
-            df_chunk['longitude'],
-            df_chunk['latitude']
-        )
-    ]
-    
-    gdf_chunk = gpd.GeoDataFrame(
-        df_chunk,
-        geometry=geometry,
-        crs="EPSG:4326"
-    )
-    
-    gdf_list.append(gdf_chunk)
-
-    print(f"Fetched {len(df_chunk)} records. Total so far: {len(pd.concat(gdf_list))}")
-    
-    offset += limit
-    # API rate limit handling
-    time.sleep(1)
-
-crash_gdf = pd.concat(gdf_list, ignore_index=True)
+crash_gdf = gpd.GeoDataFrame(
+    crash_gdf,
+    geometry=gpd.points_from_xy(
+        crash_gdf["longitude"].astype(float),
+        crash_gdf["latitude"].astype(float)
+    ),
+    crs="EPSG:4326"
+)
 
 crash_gdf = crash_gdf.to_crs(2263)
 
