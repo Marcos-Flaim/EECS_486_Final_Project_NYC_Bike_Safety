@@ -54,7 +54,7 @@ The pipeline combines:
 
 - Output: data/intersection_predictions.csv
 
-
+# *****STILL NEED TO FIX:
 4. Generate intervention recommendations:
     python retreival/predicted_fix.py
 
