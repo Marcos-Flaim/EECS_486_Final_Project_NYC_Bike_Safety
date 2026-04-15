@@ -7,7 +7,7 @@ import csv
 # Load a pretrained Sentence Transformer model
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-Intervention_Document = pd.read_csv("Intervention_Document.csv")
+Intervention_Document = pd.read_csv("data/Intervention Document.csv")
 
 def readCSV():
     # extract the column containing the keywords and title
@@ -29,10 +29,10 @@ def createEmbeddings():
     return model.encode(sentences)
 
 def main():
-    boolean_list = open("boolean_list_output.csv", "rt")
-    intersection_predictions = open("intersection_predictions.csv", "rt")
+    boolean_list = open("data/boolean_list_output.csv", "rt")
+    intersection_predictions = open("data/intersection_predictions.csv", "rt")
     
-    output_file = open("predicted_fix.csv", "w", newline= '')
+    output_file = open("data/predicted_fix.csv", "w", newline= '')
     output_file.write("NODEID,crash_count,total_killed,total_injured,severity_score,severity_score_norm,intersection_name,latitude,longitude,Has_Enhanced_Crossing,Has_Leading_Pedestrian_Signal,Has_Turn_Traffic_Calming,Has_SIP,Has_Exclusive_Pedestrian_Signal,Has_Accessible_Pedestrian_Signal,Is_Protected_Intersection,Has_Pedestrian_Ramp,Has_Bus_Lane,Has_Speed_Hump,Is_Speed_Reduced,Is_Bike_Route,Has_Bad_Pavement,Predicted_Fix\n")
     output_list = []
     
