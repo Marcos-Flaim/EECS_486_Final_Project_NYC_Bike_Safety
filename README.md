@@ -61,6 +61,7 @@ The pipeline combines:
 * `data/intersection_predictions.csv` (ML predicted causes)
 * `data/boolean_list_output.csv` (intersection features)
 * `data/Intervention Document.csv` (intervention corpus)
+* `data/predicted_fix.csv` (final output/recomendations)
 
 
 File organization:
