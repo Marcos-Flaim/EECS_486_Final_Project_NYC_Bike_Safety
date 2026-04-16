@@ -54,6 +54,11 @@ The pipeline combines:
 
 - Output: data/intersection_predictions.csv
 
+4. Run final intersection prediction using embeddings (5min):
+   python retreival/predicted_fix.py
+
+- Output: data/predicted_fix.csv
+
 
 # Key Files
 
